@@ -12,6 +12,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   UserCheck,
   UserPlus,
   UsersRound,
@@ -34,8 +35,7 @@ import {
 } from "recharts";
 import { useApp } from "@/app/AppStore";
 import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
-import { supabase } from "@/lib/supabaseClient";
-import { initialTasks } from "@/data/mockData";
+
 import type { CallOutcome, Priority, Task } from "@/types";
 import { cn, displayTime } from "@/lib/utils";
 import { Empty, PageHeader, PriorityBadge, Stat, StatusBadge, icons } from "./shared";
@@ -142,23 +142,12 @@ function formatTaskTime(timeStr?: string) {
 }
 
 export function TaskManagementPage() {
-  const { tasks, patients, staff, users, createTask, updateTaskStatus } = useApp();
+
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [error, setError] = useState("");
-
-  const defaultTimes = useMemo(() => getDefaultTimes(), []);
-
-  const clinicalStaff = useMemo(() => {
-    const list = staff && staff.length > 0 ? staff : users;
-    const filtered = list.filter((s) => {
-      const r = (s.role || "").toLowerCase();
-      return r === "doctor" || r === "nurse" || r.includes("doc") || r.includes("nurse");
-    });
-    return filtered.length > 0 ? filtered : list;
-  }, [staff, users]);
 
   const [form, setForm] = useState({
     task_name: "",
@@ -397,6 +386,7 @@ export function TaskManagementPage() {
                   "AI call schedule",
                   "Priority",
                   "Status",
+                  "Actions",
                 ].map((x) => (
                   <th key={x} className="px-5 py-3 font-semibold">
                     {x}
@@ -456,6 +446,28 @@ export function TaskManagementPage() {
                         className="pointer-events-none absolute right-2 text-current opacity-60"
                       />
                     </div>
+                  </td>
+                  <td className="px-5">
+                    <Button
+                      variant="secondary"
+                      disabled={!!loading || ["verified", "self-reported"].includes(t.status)}
+                      onClick={() =>
+                        triggerCall(
+                          t,
+                          ["pending", "acknowledged"].includes(t.status)
+                            ? "reminder"
+                            : "verification",
+                        )
+                      }
+                      className="gap-1.5 whitespace-nowrap"
+                    >
+                      <PhoneCall size={13} />
+                      {loading === t.id
+                        ? "Calling…"
+                        : ["pending", "acknowledged"].includes(t.status)
+                          ? "Remind Now"
+                          : "Verify Now"}
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -603,6 +615,16 @@ export function TaskManagementPage() {
             </div>
           </div>
         </div>
+      )}
+      {modalState && (
+        <CallSimulationModal
+          task={modalState.task}
+          staff={modalState.staff}
+          callType={modalState.callType}
+          fallbackReason={modalState.fallbackReason}
+          onComplete={handleModalComplete}
+          onClose={closeModal}
+        />
       )}
     </>
   );
@@ -1608,20 +1630,36 @@ function Avatar({ name }: { name: string }) {
 }
 
 export function CallHistoryPage() {
-  const { calls, tasks, users } = useApp();
+  const { calls, tasks, users, simulateCall } = useApp();
   const [type, setType] = useState("all");
   const [outcome, setOutcome] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
+  const { triggerCall, loading, modalState, handleModalComplete, closeModal } =
+    useCallTrigger(users, simulateCall);
   const filtered = calls.filter(
     (c) => (type === "all" || c.type === type) && (outcome === "all" || c.outcome === outcome),
   );
   const detail = calls.find((c) => c.id === selected);
+  // Pick the first pending/overdue task for the test-call button
+  const testTask = tasks.find((t) => ["pending", "acknowledged", "overdue"].includes(t.status));
   return (
     <>
       <PageHeader
         eyebrow="AI voice audit trail"
         title="Call history"
         description="Review reminder and verification outcomes, interpreted responses, and full demo transcripts."
+        actions={
+          testTask ? (
+            <Button
+              disabled={!!loading}
+              onClick={() => triggerCall(testTask, "verification")}
+              className="gap-1.5"
+            >
+              <Sparkles size={15} />
+              {loading ? "Initiating…" : "Trigger Test Call"}
+            </Button>
+          ) : undefined
+        }
       />
       <Card className="overflow-hidden">
         <div className="flex flex-wrap gap-3 border-b border-slate-100 p-4">
@@ -1751,6 +1789,16 @@ export function CallHistoryPage() {
             </div>
           </div>
         </div>
+      )}
+      {modalState && (
+        <CallSimulationModal
+          task={modalState.task}
+          staff={modalState.staff}
+          callType={modalState.callType}
+          fallbackReason={modalState.fallbackReason}
+          onComplete={handleModalComplete}
+          onClose={closeModal}
+        />
       )}
     </>
   );
