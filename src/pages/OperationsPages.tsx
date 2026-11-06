@@ -6,8 +6,12 @@ import {
   ChevronDown,
   ClipboardPlus,
   ArrowLeftRight,
+<<<<<<< Updated upstream
   Loader2,
   Pencil,
+=======
+  Mic,
+>>>>>>> Stashed changes
   PhoneCall,
   Search,
   ShieldCheck,
@@ -448,26 +452,49 @@ export function TaskManagementPage() {
                     </div>
                   </td>
                   <td className="px-5">
-                    <Button
-                      variant="secondary"
-                      disabled={!!loading || ["verified", "self-reported"].includes(t.status)}
-                      onClick={() =>
-                        triggerCall(
-                          t,
-                          ["pending", "acknowledged"].includes(t.status)
-                            ? "reminder"
-                            : "verification",
-                        )
-                      }
-                      className="gap-1.5 whitespace-nowrap"
-                    >
-                      <PhoneCall size={13} />
-                      {loading === t.id
-                        ? "Calling…"
-                        : ["pending", "acknowledged"].includes(t.status)
-                          ? "Remind Now"
-                          : "Verify Now"}
-                    </Button>
+                    <div className="flex flex-col gap-1.5">
+                      {/* Live Voice Demo — primary CTA for pending/overdue tasks */}
+                      {["pending", "acknowledged", "overdue"].includes(t.status) && (
+                        <button
+                          disabled={!!loading}
+                          onClick={() =>
+                            triggerCall(
+                              t,
+                              ["pending", "acknowledged"].includes(t.status)
+                                ? "reminder"
+                                : "verification",
+                            )
+                          }
+                          className="flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-cyan-600 to-blue-600 px-3 py-1.5 text-[11px] font-bold text-white whitespace-nowrap transition hover:from-cyan-700 hover:to-blue-700 disabled:opacity-50"
+                        >
+                          <Mic size={12} />
+                          {loading === t.id ? "Connecting…" : "Live Voice Demo"}
+                        </button>
+                      )}
+                      {/* Quick call button (secondary) */}
+                      <Button
+                        variant="secondary"
+                        disabled={!!loading || ["verified", "self-reported"].includes(t.status)}
+                        onClick={() =>
+                          triggerCall(
+                            t,
+                            ["pending", "acknowledged"].includes(t.status)
+                              ? "reminder"
+                              : "verification",
+                          )
+                        }
+                        className="gap-1 h-7 px-2.5 text-[11px] whitespace-nowrap"
+                      >
+                        <PhoneCall size={11} />
+                        {loading === t.id
+                          ? "Calling…"
+                          : ["pending", "acknowledged"].includes(t.status)
+                            ? "Remind"
+                            : ["verified", "self-reported"].includes(t.status)
+                              ? "Done ✓"
+                              : "Verify"}
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

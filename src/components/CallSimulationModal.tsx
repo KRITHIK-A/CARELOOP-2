@@ -1,5 +1,28 @@
-import { useEffect, useRef, useState } from "react";
-import { Bot, Mic, MicOff, PhoneOff, UserRound, X, Zap } from "lucide-react";
+/**
+ * CallSimulationModal — interactive audio demo call
+ *
+ * Flow:
+ *  1. Ringing (2.2 s) → Connecting (1.4 s) → Active
+ *  2. AI opening line rendered + spoken via SpeechSynthesis
+ *  3. After AI finishes: SpeechRecognition auto-starts
+ *  4. User speaks → interim text shown live → final text mapped to outcome
+ *  5. Staff reply added to transcript, AI ack spoken → modal auto-closes
+ *
+ * Manual quick-response buttons remain as backup (always visible in active phase).
+ */
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Bot,
+  Mic,
+  MicOff,
+  PhoneOff,
+  UserRound,
+  Volume2,
+  VolumeX,
+  X,
+  Zap,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui";
 import { DEMO_RESPONSES, getAIOpeningLine, type DemoOutcome } from "@/services/callManager";
@@ -11,7 +34,6 @@ export interface CallSimulationModalProps {
   task: Task;
   staff: User;
   callType: "reminder" | "verification";
-  /** Fallback reason from callManager (shown as a subtle note) */
   fallbackReason?: string;
   onComplete: (outcome: DemoOutcome, staffReply: string) => void;
   onClose: () => void;
@@ -30,13 +52,22 @@ interface TranscriptLine {
 function pad(n: number) {
   return String(n).padStart(2, "0");
 }
-
 function formatDuration(s: number) {
   return `${pad(Math.floor(s / 60))}:${pad(s % 60)}`;
 }
 
-/** Typewriter hook — appends one character at a time */
-function useTypewriter(text: string, speed = 28): string {
+/** Map spoken words to a demo outcome. Errs towards "pending" for safety. */
+function speechToOutcome(spoken: string): DemoOutcome {
+  const l = spoken.toLowerCase();
+  if (/\b(yes|done|complet|finish|administer|gave|given|already|just did)\b/.test(l)) return "completed";
+  if (/\b(help|assist|escalat|urgent|emergency|problem|issue|not safe)\b/.test(l)) return "assistance";
+  if (/\b(no answer|missed|no response)\b/.test(l)) return "no-answer";
+  return "pending"; // "not yet", "sleeping", "busy", etc.
+}
+
+/* ──────────────────── Typewriter hook ──────────────────── */
+
+function useTypewriter(text: string, speed = 24): string {
   const [displayed, setDisplayed] = useState("");
   useEffect(() => {
     setDisplayed("");
@@ -52,23 +83,22 @@ function useTypewriter(text: string, speed = 28): string {
   return displayed;
 }
 
-/* ──────────────────────── Waveform bars ─────────────────────── */
+/* ──────────────────────── Waveform ──────────────────────── */
 
-function Waveform({ active }: { active: boolean }) {
-  const bars = [3, 5, 8, 6, 4, 7, 5, 9, 6, 4, 7, 5, 8, 6, 3];
+function Waveform({ mode }: { mode: "ai" | "user" | "idle" }) {
+  const bars = [3, 5, 8, 6, 4, 9, 5, 7, 6, 4, 8, 5, 7, 6, 3];
+  const color =
+    mode === "ai" ? "bg-cyan-400" : mode === "user" ? "bg-emerald-400" : "bg-slate-300";
   return (
     <div className="flex items-end justify-center gap-[3px] h-8">
       {bars.map((h, i) => (
         <span
           key={i}
-          className={cn(
-            "w-[3px] rounded-full bg-cyan-400 origin-bottom transition-all",
-            active ? "animate-pulse" : "opacity-30",
-          )}
+          className={cn("w-[3px] rounded-full origin-bottom transition-all duration-300", color)}
           style={{
-            height: active ? `${h * 3}px` : "4px",
-            animationDelay: `${i * 60}ms`,
-            animationDuration: `${700 + (i % 3) * 200}ms`,
+            height: mode !== "idle" ? `${h * (mode === "user" ? 3.5 : 3)}px` : "4px",
+            animationDelay: `${i * 55}ms`,
+            opacity: mode !== "idle" ? 1 : 0.3,
           }}
         />
       ))}
@@ -76,11 +106,11 @@ function Waveform({ active }: { active: boolean }) {
   );
 }
 
-/* ────────────────────── Transcript bubble ───────────────────── */
+/* ────────────────── Transcript bubble ───────────────────── */
 
 function Bubble({ line, animate }: { line: TranscriptLine; animate?: boolean }) {
   const isAI = line.speaker === "AI";
-  const text = useTypewriter(animate ? line.text : "", 22);
+  const text = useTypewriter(animate ? line.text : "", 20);
   return (
     <div className={cn("flex gap-2.5", isAI ? "" : "flex-row-reverse")}>
       <div
@@ -100,7 +130,7 @@ function Bubble({ line, animate }: { line: TranscriptLine; animate?: boolean }) 
         )}
       >
         <span className="mb-0.5 block text-[9px] font-bold uppercase opacity-50 tracking-wider">
-          {line.speaker === "AI" ? "CareLoop AI" : "Staff"}
+          {isAI ? "CareLoop AI" : "Staff"}
         </span>
         {animate ? text : line.text}
       </div>
@@ -108,64 +138,7 @@ function Bubble({ line, animate }: { line: TranscriptLine; animate?: boolean }) 
   );
 }
 
-/* ──────────────────────── Mic button ───────────────────────── */
-
-function MicButton({ onResult }: { onResult: (text: string) => void }) {
-  const [listening, setListening] = useState(false);
-  // SpeechRecognition is not in older TS DOM types — use dynamic access
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recogRef = useRef<any>(null);
-
-  const toggle = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const w = window as any;
-    const SR = w.SpeechRecognition ?? w.webkitSpeechRecognition;
-
-    if (!SR) {
-      alert("Speech recognition is not supported in this browser. Use Chrome or Edge.");
-      return;
-    }
-
-    if (listening) {
-      recogRef.current?.stop();
-      setListening(false);
-      return;
-    }
-
-    const r = new SR();
-    r.lang = "en-IN";
-    r.interimResults = false;
-    r.maxAlternatives = 1;
-    r.onstart = () => setListening(true);
-    r.onend = () => setListening(false);
-    r.onerror = () => setListening(false);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    r.onresult = (e: any) => {
-      const transcript: string = e.results[0]?.[0]?.transcript ?? "";
-      if (transcript) onResult(transcript);
-    };
-    recogRef.current = r;
-    r.start();
-  };
-
-  return (
-    <button
-      onClick={toggle}
-      title={listening ? "Stop mic" : "Speak your response (Chrome/Edge)"}
-      className={cn(
-        "flex items-center gap-2 rounded-lg border px-3.5 py-2 text-xs font-semibold transition",
-        listening
-          ? "border-red-300 bg-red-50 text-red-700 animate-pulse"
-          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50",
-      )}
-    >
-      {listening ? <MicOff size={14} /> : <Mic size={14} />}
-      {listening ? "Listening… (click to stop)" : "🎙 Speak via Mic"}
-    </button>
-  );
-}
-
-/* ═══════════════════ Main Modal Component ════════════════════ */
+/* ═════════════════════ Main Component ═══════════════════════ */
 
 export function CallSimulationModal({
   task,
@@ -178,123 +151,262 @@ export function CallSimulationModal({
   const [phase, setPhase] = useState<CallPhase>("ringing");
   const [seconds, setSeconds] = useState(0);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
-  const [latestIdx, setLatestIdx] = useState(-1); // which line is currently animating
+  const [latestIdx, setLatestIdx] = useState(-1);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [interimText, setInterimText] = useState("");
+  const [micError, setMicError] = useState(false);
+  const [ttsSupported] = useState(() => "speechSynthesis" in window);
+
   const transcriptRef = useRef<HTMLDivElement>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recogRef = useRef<any>(null);
+  // Ref lets async callbacks read current phase without stale closures
+  const phaseRef = useRef<CallPhase>("ringing");
+  phaseRef.current = phase;
 
   const aiOpening = getAIOpeningLine(callType, task.description);
 
-  /* ── Phase progression ── */
+  /* ─── Auto-scroll transcript ─── */
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase("connecting"), 2200);
-    const t2 = setTimeout(() => {
-      setPhase("active");
-      // Push AI opening line after a beat
-      setTimeout(() => {
-        setTranscript([{ speaker: "AI", text: aiOpening, id: crypto.randomUUID() }]);
-        setLatestIdx(0);
-      }, 600);
-    }, 3600);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [aiOpening]);
+    const el = transcriptRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [transcript, interimText]);
 
-  /* ── Call timer ── */
+  /* ─── Timer ─── */
   useEffect(() => {
     if (phase !== "active" && phase !== "responding") return;
     const id = setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => clearInterval(id);
   }, [phase]);
 
-  /* ── Auto-scroll transcript ── */
-  useEffect(() => {
-    const el = transcriptRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [transcript]);
+  /* ─────────────────── SpeechSynthesis ───────────────────── */
 
-  /* ── Handle a demo response choice ── */
-  const handleResponse = (outcome: DemoOutcome, staffReply: string) => {
-    if (phase !== "active") return;
-    setPhase("responding");
+  const speakAI = useCallback(
+    (text: string, onDone?: () => void) => {
+      if (!ttsSupported) {
+        onDone?.();
+        return;
+      }
+      window.speechSynthesis.cancel();
+      setIsSpeaking(true);
 
-    if (outcome === "no-answer") {
-      // Skip transcript — straight to ending
-      setTimeout(() => {
-        setPhase("ending");
-        setTimeout(() => onComplete(outcome, ""), 900);
-      }, 800);
+      const utter = new SpeechSynthesisUtterance(text);
+      utter.rate = 0.9;
+      utter.pitch = 1.05;
+      utter.volume = 1;
+      // Prefer a natural English voice if available
+      const voices = window.speechSynthesis.getVoices();
+      const preferred =
+        voices.find((v) => v.lang.startsWith("en") && v.name.includes("Google")) ??
+        voices.find((v) => v.lang.startsWith("en")) ??
+        undefined;
+      if (preferred) utter.voice = preferred;
+
+      utter.onend = () => {
+        setIsSpeaking(false);
+        onDone?.();
+      };
+      utter.onerror = () => {
+        setIsSpeaking(false);
+        onDone?.();
+      };
+      window.speechSynthesis.speak(utter);
+    },
+    [ttsSupported],
+  );
+
+  /* ─────────────────── SpeechRecognition ─────────────────── */
+
+  const startListening = useCallback(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const w = window as any;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SR: new () => any = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+    if (!SR) {
+      setMicError(true);
       return;
     }
 
-    // Show staff reply
-    const staffLine: TranscriptLine = { speaker: "Staff", text: staffReply, id: crypto.randomUUID() };
-    setTranscript((v) => {
-      const next = [...v, staffLine];
-      setLatestIdx(next.length - 1);
-      return next;
-    });
+    try {
+      const r = new SR();
+      r.lang = "en-IN";
+      r.interimResults = true;
+      r.continuous = false;
+      r.maxAlternatives = 1;
 
-    // Show AI acknowledgement
+      r.onstart = () => {
+        setIsListening(true);
+        setMicError(false);
+      };
+      r.onend = () => {
+        setIsListening(false);
+        setInterimText("");
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      r.onerror = (e: any) => {
+        setIsListening(false);
+        setInterimText("");
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") {
+          setMicError(true);
+        }
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      r.onresult = (e: any) => {
+        let interim = "";
+        let final = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) final += e.results[i][0].transcript;
+          else interim += e.results[i][0].transcript;
+        }
+        if (interim) setInterimText(interim);
+        if (final && phaseRef.current === "active") {
+          setInterimText("");
+          handleSpeechFinal(final);
+        }
+      };
+
+      recogRef.current = r;
+      r.start();
+    } catch {
+      setMicError(true);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // handleSpeechFinal added via ref below
+
+  /* ─────────────── Core response dispatcher ─────────────── */
+
+  // Keep in a ref so startListening/speakAI callbacks can call latest version
+  const doResponseRef = useRef<((outcome: DemoOutcome, staffReply: string) => void) | null>(null);
+
+  doResponseRef.current = (outcome: DemoOutcome, staffReply: string) => {
+    if (phaseRef.current !== "active") return;
+
+    // Stop mic
+    recogRef.current?.stop();
+    setIsListening(false);
+    setInterimText("");
+
+    // Update phase ref immediately (before state batch)
+    phaseRef.current = "responding";
+    setPhase("responding");
+
+    if (outcome === "no-answer") {
+      speakAI("No response received. This call will be marked as unanswered.", () => {
+        phaseRef.current = "ending";
+        setPhase("ending");
+        setTimeout(() => onComplete(outcome, ""), 800);
+      });
+      return;
+    }
+
+    // Add staff reply bubble
+    if (staffReply) {
+      setTranscript((v) => {
+        const next = [...v, { speaker: "Staff" as const, text: staffReply, id: crypto.randomUUID() }];
+        setLatestIdx(next.length - 1);
+        return next;
+      });
+    }
+
     const ack =
       outcome === "completed"
         ? "Thank you. Your response has been recorded and will be reviewed by your supervisor."
         : outcome === "assistance"
           ? "Understood. I am escalating this to your supervisor immediately. Please stay available."
-          : "Understood. I have noted your status. A follow-up will be scheduled.";
+          : "Understood. I have noted your status. A verification follow-up will be scheduled.";
 
+    // Brief pause, then AI ack bubble + speak
     setTimeout(() => {
-      const aiLine: TranscriptLine = { speaker: "AI", text: ack, id: crypto.randomUUID() };
       setTranscript((v) => {
-        const next = [...v, aiLine];
+        const next = [...v, { speaker: "AI" as const, text: ack, id: crypto.randomUUID() }];
         setLatestIdx(next.length - 1);
         return next;
       });
-
-      // Wind down
-      setTimeout(() => {
+      speakAI(ack, () => {
+        phaseRef.current = "ending";
         setPhase("ending");
-        setTimeout(() => onComplete(outcome, staffReply), 1000);
-      }, 2200);
-    }, 1400);
+        setTimeout(() => onComplete(outcome, staffReply), 800);
+      });
+    }, staffReply ? 900 : 200);
   };
 
-  /* ── Handle mic speech input ── */
-  const handleSpeech = (text: string) => {
-    if (phase !== "active") return;
-    // Heuristic mapping of spoken text to outcomes
-    const lower = text.toLowerCase();
-    const outcome: DemoOutcome =
-      lower.includes("complet") || lower.includes("done") || lower.includes("yes")
-        ? "completed"
-        : lower.includes("help") || lower.includes("assist") || lower.includes("escalat")
-          ? "assistance"
-          : lower.includes("no") || lower.includes("not yet") || lower.includes("sleep")
-            ? "pending"
-            : "pending";
-    handleResponse(outcome, text);
-  };
+  /* Keep handleSpeechFinal stable via ref */
+  const handleSpeechFinal = useCallback((spoken: string) => {
+    doResponseRef.current?.(speechToOutcome(spoken), spoken);
+  }, []);
 
-  /* ── Phase label & colour ── */
-  const phaseLabel = {
-    ringing: "Ringing…",
-    connecting: "Connecting…",
-    active: "Call active",
-    responding: "Recording response…",
-    ending: "Call ending…",
-  }[phase];
+  // Patch handleSpeechFinal reference into startListening after first render
+  useEffect(() => {
+    // We capture it via doResponseRef inside startListening's onresult already — no patch needed.
+    // This effect is intentionally empty; keeping for clarity.
+  }, [handleSpeechFinal]);
+
+  /* ─────────────── Phase progression + initial TTS ────────── */
+
+  useEffect(() => {
+    const t1 = setTimeout(() => setPhase("connecting"), 2200);
+    const t2 = setTimeout(() => {
+      phaseRef.current = "active";
+      setPhase("active");
+
+      // Push AI line after a brief beat, then speak + auto-listen
+      setTimeout(() => {
+        setTranscript([{ speaker: "AI", text: aiOpening, id: crypto.randomUUID() }]);
+        setLatestIdx(0);
+
+        speakAI(aiOpening, () => {
+          // Auto-start recognition after AI finishes speaking
+          if (phaseRef.current === "active") startListening();
+        });
+      }, 600);
+    }, 3600);
+
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      window.speechSynthesis?.cancel();
+      recogRef.current?.stop();
+    };
+  }, [aiOpening, speakAI, startListening]);
+
+  /* ─────────────────────── UI state ─────────────────────── */
 
   const isLive = phase === "active" || phase === "responding";
+  const waveMode: "ai" | "user" | "idle" = isSpeaking ? "ai" : isListening ? "user" : "idle";
+
+  const statusLabel = isSpeaking
+    ? "AI speaking…"
+    : isListening
+      ? "Listening for your response…"
+      : phase === "active"
+        ? "Speak or choose a response below"
+        : phase === "ringing"
+          ? "Ringing…"
+          : phase === "connecting"
+            ? "Connecting…"
+            : phase === "responding"
+              ? "Recording response…"
+              : "Call ending…";
+
+  /* ─────────────────── Stop TTS manually ─────────────────── */
+
+  const skipSpeech = () => {
+    window.speechSynthesis?.cancel();
+    setIsSpeaking(false);
+    if (phaseRef.current === "active") startListening();
+  };
+
+  /* ──────────────────────── Render ───────────────────────── */
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
-      {/* Modal card */}
-      <div className="relative w-full max-w-[520px] overflow-hidden rounded-2xl shadow-2xl shadow-blue-950/40 border border-white/10">
-        {/* ── Header strip ── */}
-        <div className="bg-[#061629] px-6 py-5 text-white">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/75 backdrop-blur-sm p-4">
+      <div className="relative w-full max-w-[540px] overflow-hidden rounded-2xl shadow-2xl shadow-blue-950/50 border border-white/10 flex flex-col max-h-[95vh]">
+
+        {/* ── Header ── */}
+        <div className="bg-[#061629] px-6 py-4 text-white shrink-0">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              {/* Animated ring */}
               <div className="relative grid size-11 place-items-center rounded-full bg-cyan-400/15 text-cyan-300 shrink-0">
                 <Bot size={22} />
                 {isLive && (
@@ -303,22 +415,26 @@ export function CallSimulationModal({
               </div>
               <div>
                 <p className="font-semibold text-sm">CareLoop AI Voice Agent</p>
-                <p className="text-[10px] text-cyan-300 flex items-center gap-1 mt-0.5">
+                <p className="flex items-center gap-1.5 text-[10px] text-cyan-300 mt-0.5">
                   <span
                     className={cn(
                       "size-1.5 rounded-full",
-                      isLive ? "bg-emerald-400 animate-pulse" : "bg-slate-500",
+                      isSpeaking
+                        ? "bg-blue-400 animate-pulse"
+                        : isListening
+                          ? "bg-emerald-400 animate-pulse"
+                          : isLive
+                            ? "bg-emerald-400"
+                            : "bg-slate-500",
                     )}
                   />
-                  {phaseLabel}
+                  {statusLabel}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-3">
               {isLive && (
-                <span className="font-mono text-sm font-bold text-white tabular-nums">
-                  {formatDuration(seconds)}
-                </span>
+                <span className="font-mono text-sm font-bold tabular-nums">{formatDuration(seconds)}</span>
               )}
               <button
                 onClick={onClose}
@@ -329,23 +445,57 @@ export function CallSimulationModal({
             </div>
           </div>
 
-          {/* Waveform */}
-          <div className="mt-4">
-            <Waveform active={isLive} />
+          {/* Audio status bar */}
+          <div className="mt-3 flex items-center gap-3">
+            <Waveform mode={waveMode} />
+            {isSpeaking && ttsSupported && (
+              <button
+                onClick={skipSpeech}
+                title="Skip AI speech"
+                className="ml-auto flex shrink-0 items-center gap-1 rounded-lg border border-white/15 px-2.5 py-1 text-[10px] font-semibold text-slate-300 hover:bg-white/10 transition"
+              >
+                <VolumeX size={11} />
+                Skip
+              </button>
+            )}
+            {isListening && (
+              <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] font-semibold text-emerald-300">
+                <Mic size={11} />
+                Mic active
+              </span>
+            )}
+            {!isSpeaking && !isListening && isLive && !ttsSupported && (
+              <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] text-slate-400">
+                <Volume2 size={11} />
+                TTS not available
+              </span>
+            )}
           </div>
 
-          {/* Fallback note */}
+          {/* Live interim speech text */}
+          {interimText && (
+            <div className="mt-2 rounded-lg bg-emerald-900/30 border border-emerald-500/20 px-3 py-1.5 text-xs text-emerald-200 italic">
+              🎙 "{interimText}…"
+            </div>
+          )}
+
+          {/* Fallback / mic error notes */}
           {fallbackReason && (
-            <p className="mt-3 text-[9px] text-slate-500 text-center">
+            <p className="mt-2 text-[9px] text-slate-500 text-center">
               <Zap size={9} className="inline mr-1" />
-              Demo mode · Sarvam fallback: {fallbackReason}
+              Demo mode · {fallbackReason}
+            </p>
+          )}
+          {micError && (
+            <p className="mt-2 rounded bg-amber-900/30 border border-amber-500/20 px-2 py-1 text-[10px] text-amber-300 text-center">
+              🎤 Mic permission denied — use the response buttons below
             </p>
           )}
         </div>
 
         {/* ── Staff card ── */}
-        <div className="bg-gradient-to-b from-blue-50/60 to-white px-6 py-4 flex items-center gap-4 border-b border-slate-100">
-          <div className="grid size-12 shrink-0 place-items-center rounded-full bg-blue-600 text-white font-bold text-sm shadow-lg shadow-blue-200">
+        <div className="bg-gradient-to-b from-blue-50/60 to-white px-6 py-3 flex items-center gap-4 border-b border-slate-100 shrink-0">
+          <div className="grid size-11 shrink-0 place-items-center rounded-full bg-blue-600 text-white font-bold text-sm shadow-lg shadow-blue-200">
             {staff.name
               .split(" ")
               .map((w) => w[0])
@@ -358,23 +508,18 @@ export function CallSimulationModal({
           </div>
           <div className="text-right shrink-0">
             <p className="text-[10px] text-slate-400 uppercase tracking-wider">Task</p>
-            <p className="text-xs font-semibold text-slate-700 max-w-[150px] truncate">
-              {task.description}
-            </p>
+            <p className="text-xs font-semibold text-slate-700 max-w-[150px] truncate">{task.description}</p>
           </div>
         </div>
 
         {/* ── Transcript ── */}
-        <div className="bg-slate-50/80 px-5 py-4">
-          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
+        <div className="bg-slate-50/80 px-5 py-3 overflow-y-auto flex-1">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
             Live transcript
           </p>
-          <div
-            ref={transcriptRef}
-            className="h-40 overflow-y-auto space-y-3 pr-1 scroll-smooth"
-          >
+          <div ref={transcriptRef} className="space-y-3 min-h-[100px]">
             {phase === "ringing" && (
-              <div className="grid h-full place-items-center">
+              <div className="grid h-24 place-items-center">
                 <div className="text-center">
                   <div className="flex justify-center gap-1 mb-2">
                     {[0, 1, 2].map((i) => (
@@ -390,7 +535,7 @@ export function CallSimulationModal({
               </div>
             )}
             {phase === "connecting" && (
-              <div className="grid h-full place-items-center text-xs text-blue-500 font-medium">
+              <div className="grid h-24 place-items-center text-xs text-blue-500 font-medium">
                 Establishing secure voice connection…
               </div>
             )}
@@ -399,32 +544,67 @@ export function CallSimulationModal({
                 <Bubble key={line.id} line={line} animate={i === latestIdx} />
               ))}
             {phase === "ending" && (
-              <div className="text-center pt-2 text-xs text-slate-400">Call ended</div>
+              <p className="pt-1 text-center text-xs text-slate-400">— Call ended —</p>
             )}
           </div>
         </div>
 
-        {/* ── Response buttons ── */}
+        {/* ── Response panel (active phase only) ── */}
         {phase === "active" && (
-          <div className="bg-white px-5 py-4 border-t border-slate-100">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-3">
-              Simulate staff response
+          <div className="bg-white px-5 py-4 border-t border-slate-100 shrink-0">
+
+            {/* Listening indicator */}
+            {isListening && (
+              <div className="mb-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Mic size={14} className="text-emerald-600 animate-pulse" />
+                  <span className="text-xs font-semibold text-emerald-800">
+                    Listening — speak your response now
+                  </span>
+                </div>
+                <button
+                  onClick={() => { recogRef.current?.stop(); setIsListening(false); }}
+                  className="text-[10px] text-slate-400 hover:text-slate-600"
+                >
+                  <MicOff size={12} />
+                </button>
+              </div>
+            )}
+
+            {/* Speaking indicator */}
+            {isSpeaking && (
+              <div className="mb-3 flex items-center justify-between rounded-xl border border-blue-200 bg-blue-50 px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <Volume2 size={14} className="text-blue-600 animate-pulse" />
+                  <span className="text-xs font-semibold text-blue-800">
+                    AI is speaking — listening will start automatically
+                  </span>
+                </div>
+                <button
+                  onClick={skipSpeech}
+                  className="text-[10px] font-medium text-blue-600 hover:text-blue-800"
+                >
+                  Skip
+                </button>
+              </div>
+            )}
+
+            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2">
+              {isSpeaking ? "Or choose manually:" : isListening ? "Or select a preset:" : "Quick response:"}
             </p>
+
             <div className="grid grid-cols-2 gap-2">
               {DEMO_RESPONSES.map((r) => (
                 <button
                   key={r.outcome}
-                  onClick={() => handleResponse(r.outcome, r.staffReply)}
+                  onClick={() => doResponseRef.current?.(r.outcome, r.staffReply)}
+                  disabled={phase !== "active"}
                   className={cn(
-                    "flex flex-col items-start rounded-xl border p-3 text-left transition hover:scale-[1.01] active:scale-[0.99]",
-                    r.tone === "primary" &&
-                      "border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-900",
-                    r.tone === "secondary" &&
-                      "border-slate-200 bg-white hover:bg-slate-50 text-slate-700",
-                    r.tone === "danger" &&
-                      "border-red-200 bg-red-50 hover:bg-red-100 text-red-900",
-                    r.tone === "ghost" &&
-                      "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500",
+                    "flex flex-col items-start rounded-xl border p-3 text-left transition hover:scale-[1.01] active:scale-[0.99] disabled:opacity-40",
+                    r.tone === "primary" && "border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-900",
+                    r.tone === "secondary" && "border-slate-200 bg-white hover:bg-slate-50 text-slate-700",
+                    r.tone === "danger" && "border-red-200 bg-red-50 hover:bg-red-100 text-red-900",
+                    r.tone === "ghost" && "border-slate-200 bg-slate-50 hover:bg-slate-100 text-slate-500",
                   )}
                 >
                   <span className="text-xs font-semibold leading-5">{r.label}</span>
@@ -433,21 +613,34 @@ export function CallSimulationModal({
               ))}
             </div>
 
-            {/* Mic option */}
-            <div className="mt-3 flex justify-center">
-              <MicButton onResult={handleSpeech} />
-            </div>
+            {/* Manual mic restart */}
+            {!isListening && !isSpeaking && !micError && (
+              <div className="mt-3 flex justify-center">
+                <button
+                  onClick={startListening}
+                  className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition"
+                >
+                  <Mic size={13} />
+                  Re-open microphone
+                </button>
+              </div>
+            )}
           </div>
         )}
 
-        {/* ── Footer / end-call ── */}
-        <div className="bg-white border-t border-slate-100 px-5 py-3 flex items-center justify-between">
+        {/* ── Footer ── */}
+        <div className="bg-white border-t border-slate-100 px-5 py-3 flex items-center justify-between shrink-0">
           <p className="text-[10px] text-slate-400">
-            {callType === "reminder" ? "📋 Reminder call" : "✅ Verification call"} · Demo environment
+            {callType === "reminder" ? "📋 Reminder" : "✅ Verification"} ·
+            {ttsSupported ? " Voice active" : " Text-only mode"}
           </p>
           <Button
             variant="danger"
-            onClick={onClose}
+            onClick={() => {
+              window.speechSynthesis?.cancel();
+              recogRef.current?.stop();
+              onClose();
+            }}
             className="gap-1.5 h-8 px-3 text-xs"
           >
             <PhoneOff size={13} />

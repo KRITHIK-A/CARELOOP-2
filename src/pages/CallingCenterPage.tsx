@@ -6,6 +6,7 @@ import {
   CircleOff,
   Clock3,
   Headphones,
+  Mic,
   Mic2,
   PhoneCall,
   PhoneIncoming,
@@ -253,16 +254,25 @@ export function CallingCenterPage() {
 
           {/* Simulation controls */}
           <div className="p-5">
-            {/* ── New: Interactive Demo Modal ── */}
-            <div className="mb-5 rounded-xl border border-cyan-200/70 bg-gradient-to-br from-cyan-50 to-blue-50/40 p-4">
+            {/* ── Live Voice Demo hero CTA ── */}
+            <button
+              disabled={active || !!loading}
+              onClick={() => task && triggerCall(task, "verification")}
+              className="mb-4 w-full flex items-center justify-center gap-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 px-5 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-200 transition hover:from-cyan-700 hover:to-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Mic size={18} />
+              {loading ? "Connecting…" : "🎙  Start Live Voice Demo"}
+            </button>
+            <p className="mb-4 text-center text-[10px] text-slate-400">
+              Speaks AI prompts via browser TTS · Mic auto-activates · Full live transcript
+            </p>
+
+            {/* ── Also: modal controls ── */}
+            <div className="mb-4 rounded-xl border border-cyan-100 bg-cyan-50/60 p-3">
               <div className="mb-2 flex items-center gap-2">
-                <Sparkles size={14} className="text-cyan-600" />
-                <span className="text-xs font-semibold text-cyan-800">Interactive Demo Call Modal</span>
-                <Badge className="ml-auto border-cyan-200 bg-cyan-100 text-cyan-700">RECOMMENDED</Badge>
+                <Sparkles size={12} className="text-cyan-600" />
+                <span className="text-[11px] font-semibold text-cyan-800">Choose call type</span>
               </div>
-              <p className="mb-3 text-[11px] leading-4 text-slate-500">
-                Full-screen AI call UI with live typewriter transcript, response buttons, and mic input. Perfect for a live judge demo.
-              </p>
               <div className="flex flex-wrap gap-2">
                 <Button
                   disabled={active || !!loading}
@@ -270,7 +280,7 @@ export function CallingCenterPage() {
                   className="gap-1.5"
                 >
                   <PhoneCall size={14} />
-                  {loading === task?.id ? "Initiating…" : "Launch Reminder Modal"}
+                  Reminder Call Modal
                 </Button>
                 <Button
                   variant="secondary"
@@ -279,7 +289,7 @@ export function CallingCenterPage() {
                   className="gap-1.5"
                 >
                   <Sparkles size={14} />
-                  {loading === task?.id ? "Initiating…" : "Launch Verification Modal"}
+                  Verification Modal
                 </Button>
               </div>
             </div>
