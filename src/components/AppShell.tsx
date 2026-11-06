@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { useApp } from "@/app/AppStore";
+import { supabase } from "@/lib/supabaseClient";
 import type { UserRole } from "@/types";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui";
@@ -78,7 +79,7 @@ export function Logo({ compact = false }: { compact?: boolean }) {
 }
 
 export function AppShell() {
-  const { currentUser, setRole, notifications, markNotificationsRead } = useApp();
+  const { currentUser, setRole, notifications, markNotificationsRead, signOut } = useApp();
   const [mobile, setMobile] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [profile, setProfile] = useState(false);
@@ -237,44 +238,84 @@ export function AppShell() {
                 className="flex items-center gap-2 rounded-lg p-1.5 hover:bg-slate-50"
               >
                 <div className="grid size-8 place-items-center rounded-lg bg-blue-50 text-xs font-bold text-blue-700">
-                  {currentUser.name
-                    .split(" ")
-                    .map((x) => x[0])
-                    .slice(-2)
-                    .join("")}
+                  {currentUser.initials ||
+                    currentUser.name
+                      .replace(/^(dr\.?|nurse)\s+/i, "")
+                      .trim()
+                      .split(/\s+/)
+                      .map((x) => x[0])
+                      .slice(0, 2)
+                      .join("")
+                      .toUpperCase() ||
+                    "CS"}
                 </div>
                 <div className="hidden text-left md:block">
-                  <p className="text-xs font-semibold">{currentUser.name}</p>
-                  <p className="text-[10px] capitalize text-slate-500">{currentUser.role}</p>
+                  <p className="text-xs font-semibold">
+                    {currentUser.name || currentUser.full_name || "CareLoop Staff"}
+                  </p>
+                  <p className="text-[10px] font-medium capitalize text-slate-500">
+                    {currentUser.role
+                      ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1)
+                      : "Supervisor"}
+                  </p>
                 </div>
                 <ChevronDown size={14} className="hidden text-slate-400 md:block" />
               </button>
               {profile && (
-                <div className="absolute right-0 top-12 w-56 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
-                  <p className="px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                    Demo role
-                  </p>
-                  {(["supervisor", "doctor", "nurse"] as UserRole[]).map((role) => (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setProfile(false)} />
+                  <div className="absolute right-0 top-12 z-50 w-60 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+                    <div className="border-b border-slate-100 px-3 py-2.5">
+                      <p className="text-xs font-bold text-slate-900">
+                        {currentUser.name || "CareLoop Staff"}
+                      </p>
+                      <p className="truncate text-[11px] text-slate-500">
+                        {currentUser.email || "staff@careloop.org"}
+                      </p>
+                      <span className="mt-1.5 inline-block rounded bg-blue-50 px-2 py-0.5 text-[10px] font-semibold capitalize text-blue-700">
+                        {currentUser.role
+                          ? currentUser.role.charAt(0).toUpperCase() + currentUser.role.slice(1)
+                          : "Supervisor"}
+                      </span>
+                    </div>
+                    <p className="px-3 pt-2 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                      Switch role view
+                    </p>
+                    {(["supervisor", "doctor", "nurse"] as UserRole[]).map((role) => (
+                      <button
+                        key={role}
+                        onClick={() => switchRole(role)}
+                        className={cn(
+                          "w-full rounded-lg px-3 py-1.5 text-left text-xs capitalize transition hover:bg-slate-50",
+                          currentUser.role === role && "bg-blue-50 font-semibold text-blue-700",
+                        )}
+                      >
+                        {role}
+                      </button>
+                    ))}
+                    <div className="my-1 border-t border-slate-100" />
                     <button
-                      key={role}
-                      onClick={() => switchRole(role)}
-                      className={cn(
-                        "w-full rounded-lg px-3 py-2 text-left text-sm capitalize hover:bg-slate-50",
-                        currentUser.role === role && "bg-blue-50 font-semibold text-blue-700",
-                      )}
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          if (signOut) {
+                            await signOut();
+                          } else {
+                            await supabase.auth.signOut();
+                          }
+                        } catch (err) {
+                          console.warn("Sign out error:", err);
+                        }
+                        setProfile(false);
+                        navigate("/login");
+                      }}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-red-600 transition hover:bg-red-50"
                     >
-                      {role}
+                      <LogOut size={15} />
+                      Sign out
                     </button>
-                  ))}
-                  <div className="my-1 border-t border-slate-100" />
-                  <button
-                    onClick={() => navigate("/login")}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-slate-600 hover:bg-slate-50"
-                  >
-                    <LogOut size={15} />
-                    Sign out
-                  </button>
-                </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
