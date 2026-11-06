@@ -9,6 +9,7 @@ import {
   Search,
   ShieldCheck,
   SlidersHorizontal,
+  Sparkles,
   UserCheck,
   UsersRound,
   X,
@@ -30,16 +31,20 @@ import {
 } from "recharts";
 import { useApp } from "@/app/AppStore";
 import { Badge, Button, Card, Input, Select, Textarea } from "@/components/ui";
+import { CallSimulationModal } from "@/components/CallSimulationModal";
+import { useCallTrigger } from "@/hooks/useCallTrigger";
 import type { CallOutcome, Priority, Task } from "@/types";
 import { displayTime } from "@/lib/utils";
 import { Empty, PageHeader, PriorityBadge, Stat, StatusBadge, icons } from "./shared";
 
 export function TaskManagementPage() {
-  const { tasks, users, patients, addTask } = useApp();
+  const { tasks, users, patients, addTask, simulateCall } = useApp();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [error, setError] = useState("");
+  const { triggerCall, loading, modalState, handleModalComplete, closeModal } =
+    useCallTrigger(users, simulateCall);
   const [form, setForm] = useState({
     assigneeId: "doc-a",
     patientId: "PT-1042",
@@ -144,6 +149,7 @@ export function TaskManagementPage() {
                   "AI call schedule",
                   "Priority",
                   "Status",
+                  "Actions",
                 ].map((x) => (
                   <th key={x} className="px-5 py-3 font-semibold">
                     {x}
@@ -174,6 +180,28 @@ export function TaskManagementPage() {
                   </td>
                   <td className="px-5">
                     <StatusBadge status={t.status} />
+                  </td>
+                  <td className="px-5">
+                    <Button
+                      variant="secondary"
+                      disabled={!!loading || ["verified", "self-reported"].includes(t.status)}
+                      onClick={() =>
+                        triggerCall(
+                          t,
+                          ["pending", "acknowledged"].includes(t.status)
+                            ? "reminder"
+                            : "verification",
+                        )
+                      }
+                      className="gap-1.5 whitespace-nowrap"
+                    >
+                      <PhoneCall size={13} />
+                      {loading === t.id
+                        ? "Calling…"
+                        : ["pending", "acknowledged"].includes(t.status)
+                          ? "Remind Now"
+                          : "Verify Now"}
+                    </Button>
                   </td>
                 </tr>
               ))}
@@ -303,6 +331,16 @@ export function TaskManagementPage() {
             </div>
           </div>
         </div>
+      )}
+      {modalState && (
+        <CallSimulationModal
+          task={modalState.task}
+          staff={modalState.staff}
+          callType={modalState.callType}
+          fallbackReason={modalState.fallbackReason}
+          onComplete={handleModalComplete}
+          onClose={closeModal}
+        />
       )}
     </>
   );
@@ -537,20 +575,36 @@ function Avatar({ name }: { name: string }) {
 }
 
 export function CallHistoryPage() {
-  const { calls, tasks, users } = useApp();
+  const { calls, tasks, users, simulateCall } = useApp();
   const [type, setType] = useState("all");
   const [outcome, setOutcome] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
+  const { triggerCall, loading, modalState, handleModalComplete, closeModal } =
+    useCallTrigger(users, simulateCall);
   const filtered = calls.filter(
     (c) => (type === "all" || c.type === type) && (outcome === "all" || c.outcome === outcome),
   );
   const detail = calls.find((c) => c.id === selected);
+  // Pick the first pending/overdue task for the test-call button
+  const testTask = tasks.find((t) => ["pending", "acknowledged", "overdue"].includes(t.status));
   return (
     <>
       <PageHeader
         eyebrow="AI voice audit trail"
         title="Call history"
         description="Review reminder and verification outcomes, interpreted responses, and full demo transcripts."
+        actions={
+          testTask ? (
+            <Button
+              disabled={!!loading}
+              onClick={() => triggerCall(testTask, "verification")}
+              className="gap-1.5"
+            >
+              <Sparkles size={15} />
+              {loading ? "Initiating…" : "Trigger Test Call"}
+            </Button>
+          ) : undefined
+        }
       />
       <Card className="overflow-hidden">
         <div className="flex flex-wrap gap-3 border-b border-slate-100 p-4">
@@ -680,6 +734,16 @@ export function CallHistoryPage() {
             </div>
           </div>
         </div>
+      )}
+      {modalState && (
+        <CallSimulationModal
+          task={modalState.task}
+          staff={modalState.staff}
+          callType={modalState.callType}
+          fallbackReason={modalState.fallbackReason}
+          onComplete={handleModalComplete}
+          onClose={closeModal}
+        />
       )}
     </>
   );
