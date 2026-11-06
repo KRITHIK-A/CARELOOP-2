@@ -12,10 +12,14 @@ export type CallOutcome = "scheduled" | "successful" | "no-answer" | "failed" | 
 export interface User {
   id: string;
   name: string;
+  full_name?: string;
+  firstName?: string;
+  initials?: string;
   email: string;
   role: UserRole;
   department: string;
   phone: string;
+  phone_number?: string;
 }
 export interface Doctor extends User {
   role: "doctor";
@@ -30,25 +34,52 @@ export interface Supervisor extends User {
 }
 export interface Patient {
   id: string;
+  mrn?: string;
   name: string;
+  full_name?: string;
   doctorId: string;
+  assigned_doctor?: string;
   department: string;
   room: string;
-  status: "stable" | "monitoring" | "critical" | "discharge-ready";
+  ward?: string;
+  status: "stable" | "monitoring" | "critical" | "discharge-ready" | string;
+  contact_phone?: string;
+  phone?: string;
 }
 export interface Task {
   id: string;
+  task_name?: string;
   description: string;
+  patient_id?: string;
   patientId: string;
+  patient_ref_id?: string;
+  assigned_staff?: string;
+  staff_id?: string;
   assigneeId: string;
+  due_date?: string;
   date: string;
+  due_time?: string;
   dueTime: string;
+  reminder_time?: string;
   reminderTime: string;
+  verify_time?: string;
   verificationTime: string;
-  priority: Priority;
-  status: TaskStatus;
+  priority: Priority | string;
+  status: TaskStatus | string;
+  calls_queued?: number;
   instructions?: string;
-  updatedAt: string;
+  updatedAt?: string;
+}
+export interface HandoverRecord {
+  id: string;
+  outgoing_staff?: string;
+  incoming_staff: string;
+  outgoing_staff_id?: string;
+  incoming_staff_id: string;
+  shift_name?: string;
+  notes?: string;
+  tasks_reassigned_count?: number;
+  created_at?: string;
 }
 export interface CallLog {
   id: string;
@@ -67,7 +98,7 @@ export interface Notification {
   message: string;
   time: string;
   read: boolean;
-  kind: "call" | "task" | "alert";
+  kind: "task" | "call" | "alert" | "patient";
 }
 export interface Shift {
   id: string;

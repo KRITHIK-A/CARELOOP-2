@@ -36,12 +36,16 @@ export function Stat({
   detail,
   icon,
   tone = "blue",
+  onClick,
+  active = false,
 }: {
   label: string;
   value: string | number;
   detail?: string;
   icon?: ReactNode;
   tone?: "blue" | "teal" | "amber" | "red" | "slate";
+  onClick?: () => void;
+  active?: boolean;
 }) {
   const colors = {
     blue: "bg-blue-50 text-blue-600",
@@ -51,7 +55,14 @@ export function Stat({
     slate: "bg-slate-100 text-slate-600",
   };
   return (
-    <Card className="p-4">
+    <Card
+      onClick={onClick}
+      className={cn(
+        "p-4 transition",
+        onClick && "cursor-pointer hover:border-slate-300 hover:shadow-sm active:scale-[0.99]",
+        active && "border-blue-500/80 bg-blue-50/20 ring-2 ring-blue-500/20",
+      )}
+    >
       <div className="flex items-start justify-between">
         <div>
           <p className="text-xs font-medium text-slate-500">{label}</p>
@@ -67,8 +78,9 @@ export function Stat({
     </Card>
   );
 }
-export function StatusBadge({ status }: { status: TaskStatus }) {
-  const map: Record<TaskStatus, string> = {
+export function StatusBadge({ status }: { status: string }) {
+  const normalized = (status || "pending").toLowerCase();
+  const map: Record<string, string> = {
     pending: "border-slate-200 bg-slate-50 text-slate-600",
     acknowledged: "border-blue-200 bg-blue-50 text-blue-700",
     "self-reported": "border-violet-200 bg-violet-50 text-violet-700",
@@ -76,16 +88,17 @@ export function StatusBadge({ status }: { status: TaskStatus }) {
     overdue: "border-red-200 bg-red-50 text-red-700",
     issue: "border-amber-200 bg-amber-50 text-amber-700",
   };
-  return <Badge className={map[status]}>{status.replace("-", " ")}</Badge>;
+  return <Badge className={map[normalized] || map.pending}>{status.replace("-", " ")}</Badge>;
 }
-export function PriorityBadge({ priority }: { priority: Priority }) {
-  const map: Record<Priority, string> = {
+export function PriorityBadge({ priority }: { priority: string }) {
+  const normalized = (priority || "medium").toLowerCase();
+  const map: Record<string, string> = {
     low: "border-slate-200 text-slate-500",
     medium: "border-blue-200 bg-blue-50 text-blue-700",
     high: "border-amber-200 bg-amber-50 text-amber-700",
     critical: "border-red-200 bg-red-50 text-red-700",
   };
-  return <Badge className={map[priority]}>{priority}</Badge>;
+  return <Badge className={map[normalized] || map.medium}>{priority}</Badge>;
 }
 export function Empty({ text }: { text: string }) {
   return <div className="grid min-h-40 place-items-center text-sm text-slate-400">{text}</div>;

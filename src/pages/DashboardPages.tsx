@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   AlertTriangle,
   Bot,
@@ -22,27 +23,44 @@ import { Button, Card, Progress } from "@/components/ui";
 import { displayTime } from "@/lib/utils";
 import { PageHeader, PriorityBadge, Stat, StatusBadge, icons } from "./shared";
 
-const chart = [
-  { day: "Mon", completed: 58 },
-  { day: "Tue", completed: 64 },
-  { day: "Wed", completed: 60 },
-  { day: "Thu", completed: 72 },
-  { day: "Fri", completed: 79 },
-  { day: "Sat", completed: 84 },
-  { day: "Today", completed: 76 },
-];
 export function SupervisorDashboard() {
-  const { tasks, calls, users, notifications } = useApp();
-  const completed = tasks.filter((t) => ["self-reported", "verified"].includes(t.status)).length;
-  const pending = tasks.filter((t) => ["pending", "acknowledged"].includes(t.status)).length;
-  const overdue = tasks.filter((t) => t.status === "overdue").length;
-  const pct = Math.round((completed / tasks.length) * 100);
-  const staff = users.filter((u) => u.role !== "supervisor");
+  const { currentUser, tasks, calls, users, staff, notifications } = useApp();
+  const staffList = staff && staff.length > 0 ? staff : users;
+  const completed = tasks.filter((t) =>
+    ["self-reported", "verified"].includes((t.status || "").toLowerCase()),
+  ).length;
+  const pending = tasks.filter((t) =>
+    ["pending", "acknowledged"].includes((t.status || "").toLowerCase()),
+  ).length;
+  const overdue = tasks.filter((t) => (t.status || "").toLowerCase() === "overdue").length;
+  const pct = tasks.length ? Math.round((completed / tasks.length) * 100) : 0;
+  const clinicalStaff = staffList.filter((u) => u.role !== "supervisor");
+
+  const chart = useMemo(
+    () => [
+      { day: "Mon", completed: 58 },
+      { day: "Tue", completed: 64 },
+      { day: "Wed", completed: 60 },
+      { day: "Thu", completed: 72 },
+      { day: "Fri", completed: 79 },
+      { day: "Sat", completed: 84 },
+      { day: "Today", completed: pct },
+    ],
+    [pct],
+  );
+  const greetingName =
+    currentUser.firstName ||
+    currentUser.name
+      .replace(/^(dr\.?|nurse)\s+/i, "")
+      .trim()
+      .split(/\s+/)[0] ||
+    "Supervisor";
+
   return (
     <>
       <PageHeader
         eyebrow="Clinical command center"
-        title="Good morning, Maya"
+        title={`Good morning, ${greetingName}`}
         description="Here’s what is happening across care tasks and AI voice operations today."
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -68,7 +86,7 @@ export function SupervisorDashboard() {
         />
         <Stat
           label="Requires attention"
-          value={overdue + tasks.filter((t) => t.status === "issue").length}
+          value={overdue + tasks.filter((t) => (t.status || "").toLowerCase() === "issue").length}
           detail={`${overdue} overdue`}
           icon={<AlertTriangle size={18} />}
           tone="red"
@@ -186,10 +204,15 @@ export function SupervisorDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {staff.map((u) => {
-                  const assigned = tasks.filter((t) => t.assigneeId === u.id);
+                {clinicalStaff.map((u) => {
+                  const assigned = tasks.filter(
+                    (t) =>
+                      t.staff_id === u.id ||
+                      t.assigneeId === u.id ||
+                      (t.assigned_staff && t.assigned_staff.toLowerCase() === u.name.toLowerCase()),
+                  );
                   const done = assigned.filter((t) =>
-                    ["verified", "self-reported"].includes(t.status),
+                    ["verified", "self-reported"].includes((t.status || "").toLowerCase()),
                   ).length;
                   const p = assigned.length ? Math.round((done / assigned.length) * 100) : 0;
                   return (
@@ -247,32 +270,42 @@ export function SupervisorDashboard() {
 }
 
 export function StaffDashboard({ role }: { role: "doctor" | "nurse" }) {
-  const { currentUser, tasks, patients, updateTask } = useApp();
-  const mine = tasks.filter((t) => t.assigneeId === currentUser.id);
-  const completed = mine.filter((t) => ["self-reported", "verified"].includes(t.status)).length;
+  const { currentUser, tasks, patients, updateTaskStatus } = useApp();
+  const mine = tasks.filter(
+    (t) =>
+      t.staff_id === currentUser.id ||
+      t.assigneeId === currentUser.id ||
+      (t.assigned_staff &&
+        (t.assigned_staff.toLowerCase().includes(currentUser.name.toLowerCase()) ||
+          currentUser.name.toLowerCase().includes(t.assigned_staff.toLowerCase()))),
+  );
+  const completed = mine.filter((t) =>
+    ["self-reported", "verified"].includes((t.status || "").toLowerCase()),
+  ).length;
+  const pending = mine.filter((t) =>
+    ["pending", "acknowledged"].includes((t.status || "").toLowerCase()),
+  ).length;
+  const overdue = mine.filter((t) => (t.status || "").toLowerCase() === "overdue").length;
   const pct = mine.length ? Math.round((completed / mine.length) * 100) : 0;
+  const cleanStaffName =
+    currentUser.name.replace(/^(dr\.?|nurse)\s+/i, "").trim() || currentUser.name;
+  const staffTitle =
+    role === "doctor"
+      ? `Dr. ${cleanStaffName}’s care tasks`
+      : `Nurse ${cleanStaffName}’s care tasks`;
+
   return (
     <>
       <PageHeader
         eyebrow={`${role} workspace`}
-        title={`${role === "doctor" ? "Dr." : ""} ${currentUser.name.replace("Dr. ", "").replace("Nurse ", "")}’s care tasks`}
+        title={staffTitle}
         description={`${currentUser.department} · Morning shift, 8:00 AM–4:00 PM · AI reminders active`}
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         <Stat label="Assigned today" value={mine.length} icon={<ClipboardList size={18} />} />
         <Stat label="Completed" value={completed} icon={icons.check} tone="teal" />
-        <Stat
-          label="Pending"
-          value={mine.filter((t) => ["pending", "acknowledged"].includes(t.status)).length}
-          icon={icons.clock}
-          tone="amber"
-        />
-        <Stat
-          label="Overdue"
-          value={mine.filter((t) => t.status === "overdue").length}
-          icon={icons.alert}
-          tone="red"
-        />
+        <Stat label="Pending" value={pending} icon={icons.clock} tone="amber" />
+        <Stat label="Overdue" value={overdue} icon={icons.alert} tone="red" />
         <Stat label="Completion" value={`${pct}%`} icon={<TrendingUp size={18} />} />
       </div>
       <Card className="mt-5 p-5">
@@ -303,33 +336,47 @@ export function StaffDashboard({ role }: { role: "doctor" | "nurse" }) {
         </div>
         <div className="divide-y divide-slate-100">
           {mine.map((t) => {
-            const patient = patients.find((p) => p.id === t.patientId);
+            const patient = patients.find(
+              (p) =>
+                (t.patient_ref_id && p.id === t.patient_ref_id) ||
+                p.mrn === t.patient_id ||
+                p.id === t.patient_id ||
+                p.mrn === t.patientId ||
+                p.id === t.patientId,
+            );
+            const dueDisplay = displayTime(t.due_time || t.dueTime);
             return (
               <div key={t.id} className="p-4 md:p-5">
                 <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-center">
                   <div className="flex min-w-0 gap-3">
                     <div className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-50 font-bold text-slate-500">
-                      {displayTime(t.dueTime).split(":")[0]}
+                      {dueDisplay.split(":")[0]}
                     </div>
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-sm font-semibold">{t.description}</h3>
+                        <h3 className="text-sm font-semibold">{t.task_name || t.description}</h3>
                         <PriorityBadge priority={t.priority} />
                         <StatusBadge status={t.status} />
                       </div>
                       <p className="mt-1 text-xs text-slate-500">
-                        {patient?.id} · Room {patient?.room} · Assigned to {currentUser.name}
+                        {patient?.mrn || patient?.id || "PT-1042"} · Room {patient?.room || "101"} ·
+                        Assigned to {currentUser.name}
                       </p>
                       <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
                         <span>
-                          Due <b className="text-slate-700">{displayTime(t.dueTime)}</b>
+                          Due <b className="text-slate-700">{dueDisplay}</b>
                         </span>
                         <span>
-                          Reminder <b className="text-slate-700">{displayTime(t.reminderTime)}</b>
+                          Reminder{" "}
+                          <b className="text-slate-700">
+                            {displayTime(t.reminder_time || t.reminderTime)}
+                          </b>
                         </span>
                         <span>
                           Verification{" "}
-                          <b className="text-slate-700">{displayTime(t.verificationTime)}</b>
+                          <b className="text-slate-700">
+                            {displayTime(t.verify_time || t.verificationTime)}
+                          </b>
                         </span>
                       </div>
                     </div>
@@ -337,23 +384,25 @@ export function StaffDashboard({ role }: { role: "doctor" | "nurse" }) {
                   <div className="flex flex-wrap gap-2">
                     <Button
                       variant="secondary"
-                      disabled={t.status !== "pending"}
-                      onClick={() => updateTask(t.id, "acknowledged")}
+                      disabled={(t.status || "").toLowerCase() !== "pending"}
+                      onClick={() => updateTaskStatus(t.id, "Acknowledged")}
                     >
                       Acknowledge
                     </Button>
                     <Button
-                      disabled={["self-reported", "verified"].includes(t.status)}
-                      onClick={() => updateTask(t.id, "self-reported")}
+                      disabled={["self-reported", "verified"].includes(
+                        (t.status || "").toLowerCase(),
+                      )}
+                      onClick={() => updateTaskStatus(t.id, "Self-reported")}
                     >
                       Mark self-reported complete
                     </Button>
-                    <Button variant="ghost" onClick={() => updateTask(t.id, "issue")}>
+                    <Button variant="ghost" onClick={() => updateTaskStatus(t.id, "issue")}>
                       Report issue
                     </Button>
                   </div>
                 </div>
-                {t.status === "self-reported" && (
+                {(t.status || "").toLowerCase() === "self-reported" && (
                   <div className="mt-3 rounded-lg border border-violet-100 bg-violet-50 p-2.5 text-xs text-violet-800">
                     <b>Self-reported complete.</b> This verbal/manual response is recorded but is
                     not an independent clinical verification.
